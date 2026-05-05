@@ -1,2 +1,1 @@
-# This project currently uses only Python standard library modules.
-# No third-party pip packages are required to run generate_der.py.
+psycopg2-binary>=2.9,<3.0
