@@ -3,6 +3,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Any
 
+import psycopg2
+import psycopg2.extras
 
 
 def load_env(path: str = ".env") -> None:
@@ -22,15 +24,6 @@ def load_env(path: str = ".env") -> None:
 
 class Database:
     def __init__(self) -> None:
-        self.conn = None
-
-    def _ensure_connection(self) -> None:
-        if self.conn is not None and not self.conn.closed:
-            return
-
-        import psycopg2
-        import psycopg2.extras
-
         load_env()
         self.conn = psycopg2.connect(
             host=os.getenv("DB_HOST", "localhost"),
@@ -41,8 +34,6 @@ class Database:
         )
 
     def fetch_all_dict(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
-        self._ensure_connection()
-        import psycopg2.extras
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(sql, params)
             return [dict(row) for row in cur.fetchall()]
@@ -54,7 +45,12 @@ class IncidentesApp(tk.Tk):
         self.title("SISI Tools - Main")
         self.geometry("1200x760")
 
-        self.db = Database()
+        try:
+            self.db = Database()
+        except Exception as exc:
+            messagebox.showerror("Error de conexión", f"No se pudo conectar a PostgreSQL:\n{exc}")
+            self.destroy()
+            return
 
         self.main_frame = ttk.Frame(self, padding=16)
         self.main_frame.pack(fill="both", expand=True)
@@ -101,6 +97,7 @@ class ConsultaIncidenteWindow(tk.Toplevel):
         self.result_frame.pack(fill="both", expand=True, padx=12, pady=(0, 12))
 
         self.result_tree = self._create_tree(self.result_frame)
+        self.result_tree.pack(fill="x", expand=False)
         self.result_tree.bind("<<TreeviewSelect>>", self.on_select_incidente)
 
         self.tabs = ttk.Notebook(self.result_frame)
@@ -111,6 +108,7 @@ class ConsultaIncidenteWindow(tk.Toplevel):
             tab = ttk.Frame(self.tabs)
             self.tabs.add(tab, text=table_name)
             tree = self._create_tree(tab)
+            tree.pack(fill="both", expand=True)
             self.tab_trees[table_name] = tree
 
         self.incidentes_cache: list[dict[str, Any]] = []
@@ -171,31 +169,19 @@ class ConsultaIncidenteWindow(tk.Toplevel):
 
         where_sql = " AND ".join(filters) if filters else "TRUE"
         sql = f"""
-            SELECT
-                ic.inccabeceraid,
-                ic.inccabecerafechaini,
-                ic.inccabecerafechafin,
-                ic.silegnro,
-                ic.siorgcodigo,
-                ic.inccabeceraestado,
-                ic.inccabeceraprioridad,
-                ic.problemaid,
-                ic.tipoproblemaid,
-                LEFT(ic.inccabeceradetalle, 240) AS inccabeceradetalle
+            SELECT ic.*
             FROM public.inccabecera ic
             LEFT JOIN public.organismo o
               ON TRIM(ic.siorgcodigo) = TRIM(o.organismocodigo)
             WHERE {where_sql}
             ORDER BY ic.inccabeceraid DESC
-            LIMIT 200
+            LIMIT 500
         """
 
         try:
             self.incidentes_cache = self.db.fetch_all_dict(sql, tuple(params))
             self.populate_tree(self.result_tree, self.incidentes_cache)
             self.clear_detail_tabs()
-        except ValueError:
-            messagebox.showerror("Error", "inccabeceraid y legnro deben ser numéricos")
         except Exception as exc:
             messagebox.showerror("Error", f"No se pudo ejecutar la búsqueda:\n{exc}")
 
